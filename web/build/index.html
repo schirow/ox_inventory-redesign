@@ -9,11 +9,12 @@
     <title>Ox Inventory</title>
     <!-- must load before index.js: ox overrides window.fetch afterwards -->
     <script src="./assets/search.js"></script>
+    <script type="module" crossorigin src="./assets/index.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index.css">
   </head>
   <body>
     <!-- redesign styles: after the ox stylesheet so the overrides win -->
     <link rel="stylesheet" href="./assets/redesign.css" />
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
