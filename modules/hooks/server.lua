@@ -115,14 +115,13 @@ local function TriggerEventHooks(event, payload)
     return result
 end
 
-exports('registerHook', function(event, ref, options)
+local function registerHook(event, ref, options, resource)
     if not eventHooks[event] then
         eventHooks[event] = {}
     end
 
 	local mt = ref and getmetatable(ref)
 	local idx = #eventHooks[event] + 1
-	local resource = GetInvokingResource()
 
 	if mt then
 		mt.__index = mt
@@ -146,7 +145,22 @@ exports('registerHook', function(event, ref, options)
     eventHooks[event][idx] = ref
 
 	return ref.hookId
+end
+
+exports('registerHook', function(event, ref, options)
+	return registerHook(event, ref, options, GetInvokingResource())
 end)
+
+---Registers a hook from inside ox_inventory itself (e.g. modules/backpack).
+---Plain Lua functions are wrapped into a callable table, like the funcrefs created for exports.
+---@param event string
+---@param cb fun(payload: table): any
+---@param options? table
+---@return string hookId
+function server.registerHook(event, cb, options)
+	local ref = setmetatable({}, { __call = function(_, payload) return cb(payload) end })
+	return registerHook(event, ref, options, cache.resource)
+end
 
 local function removeResourceHooks(resource, id)
     for _, hooks in pairs(eventHooks) do

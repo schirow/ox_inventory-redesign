@@ -779,3 +779,6 @@ lib.registerHook('ox_lib:setPlayerState', nil, {
 lib.registerHook('ox_lib:setPlayerState', nil, {
     key = 'canSteal'
 })
+
+-- Backpacks (data/backpacks.lua)
+require 'modules.backpack.server'

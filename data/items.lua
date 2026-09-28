@@ -115,9 +115,9 @@ return {
 	},
 
 	['identification'] = {
-		label = 'Identification',
+		label = 'ID Card',
 		client = {
-			image = 'card_id.png'
+			image = 'id_card.png'
 		}
 	},
 
@@ -221,5 +221,23 @@ return {
 	['scrapmetal'] = {
 		label = 'Scrap Metal',
 		weight = 80,
+	},
+	-- Backpacks: settings (slots, max weight) in data/backpacks.lua
+	['backpack_small'] = {
+		label = 'Small Backpack',
+		weight = 1000,
+		stack = false,
+		consume = 0,
+		description = 'Provides 10 extra inventory slots.',
+		bag = true, -- shown in the "Bags" tab of the toolbar
+	},
+
+	['backpack_large'] = {
+		label = 'Large Backpack',
+		weight = 2000,
+		stack = false,
+		consume = 0,
+		description = 'Provides 20 extra inventory slots.',
+		bag = true,
 	},
 }

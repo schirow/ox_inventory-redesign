@@ -1671,6 +1671,7 @@ local function dropItem(source, playerInventory, fromData, data)
 
 	if server.syncInventory then server.syncInventory(playerInventory) end
 
+	-- 4th return value (dropId) is only used by transferAll
 	return true, {
 		weight = playerInventory.weight,
 		items = {
@@ -1679,14 +1680,14 @@ local function dropItem(source, playerInventory, fromData, data)
 				inventory = playerInventory.id
 			}
 		}
-	}
+	}, nil, dropId
 end
 
 local GetLocks = require 'modules.locks'
 
 ---@param source number
 ---@param data SwapSlotData
-lib.callback.register('ox_inventory:swapItems', function(source, data)
+local function swapItems(source, data)
 	if data.fromType ~= data.toType and data.toType ~= 'player' and data.fromType ~= 'player' then
         Utils.LogExploit(source, 'swapItems', 'Triggered event with invalid data', true)
         return
@@ -2039,6 +2040,137 @@ lib.callback.register('ox_inventory:swapItems', function(source, data)
 			return containerItem and containerItem.weight or true, nil, weaponSlot
 		end
 	end
+end
+
+lib.callback.register('ox_inventory:swapItems', swapItems)
+
+local noTransferTypes = { inspect = true, shop = true, crafting = true, newdrop = true }
+
+---Moves every (optionally filtered) item between the player and the currently opened inventory.
+---Each item runs through swapItems, so weight limits, hooks, locks and logging still apply.
+---@param source number
+---With `newdrop = true` (nothing opened on the right) the items are dropped on the ground as one new drop.
+---@param data { direction: 'toRight' | 'toLeft', query?: string, exclude?: string[], only?: string[], newdrop?: boolean, coords?: vector3, instance?: any }
+lib.callback.register('ox_inventory:transferAll', function(source, data)
+	if type(data) ~= 'table' then return false, 'invalid' end
+
+	local playerInventory = Inventory(source)
+	if not playerInventory or not playerInventory.open then return false, 'no_target' end
+
+	local toRight = data.direction == 'toRight'
+	local newDrop = toRight and data.newdrop == true
+	local otherInventory
+
+	if newDrop then
+		-- only if nothing else is opened on the right side
+		if playerInventory.open ~= playerInventory.id then return false, 'no_target' end
+		if type(data.coords) ~= 'vector3' then return false, 'invalid' end
+		if #(GetEntityCoords(GetPlayerPed(source)) - data.coords) > 5.0 then return false, 'invalid' end
+	else
+		otherInventory = Inventory(playerInventory.open)
+		if not otherInventory or otherInventory == playerInventory or noTransferTypes[otherInventory.type] then return false, 'no_target' end
+	end
+
+	local fromInventory = toRight and playerInventory or otherInventory
+	local toInventory = toRight and otherInventory or playerInventory -- for newDrop only known after the first item
+	local fromType = toRight and 'player' or otherInventory.type
+	local toType = newDrop and 'newdrop' or (toRight and otherInventory.type or 'player')
+	local previousOpen
+
+	local query = type(data.query) == 'string' and data.query:lower() or ''
+	local function labelSet(list)
+		local set = {}
+
+		if type(list) == 'table' then
+			for _, label in pairs(list) do
+				if type(label) == 'string' then set[label] = true end
+			end
+		end
+
+		return set
+	end
+
+	local exclude = labelSet(data.exclude)
+	local only = type(data.only) == 'table' and labelSet(data.only) or nil
+
+	local function findTargetSlot(fromData)
+		if not toInventory then return 1 end
+
+		local empty
+
+		for slot = 1, toInventory.slots do
+			local toData = toInventory.items[slot]
+
+			if not toData then
+				empty = empty or slot
+			elseif fromData.stack and toData.name == fromData.name and table.matches(toData.metadata, fromData.metadata) then
+				return slot
+			end
+		end
+
+		return empty
+	end
+
+	local moved, failed = 0, 0
+	local fromSlots = {}
+
+	for slot, item in pairs(fromInventory.items) do
+		if item and item.name then fromSlots[#fromSlots + 1] = slot end
+	end
+
+	table.sort(fromSlots)
+
+	for i = 1, #fromSlots do
+		local fromSlot = fromSlots[i]
+		local fromData = fromInventory.items[fromSlot]
+
+		-- never move the currently opened bag out of the player inventory
+		if fromData and not (fromInventory == playerInventory and playerInventory.containerSlot == fromSlot) then
+			local label = fromData.metadata?.label or fromData.label or fromData.name
+
+			if not exclude[label] and (not only or only[label]) and (query == '' or tostring(label):lower():find(query, 1, true)) then
+				local toSlot = findTargetSlot(fromData)
+
+				if toSlot then
+					local swapData = {
+						fromSlot = fromSlot,
+						fromType = fromType,
+						toSlot = toSlot,
+						toType = toType,
+						count = fromData.count,
+					}
+
+					if toType == 'newdrop' then
+						swapData.coords = data.coords
+						swapData.instance = data.instance
+					end
+
+					local success, _, _, dropId = swapItems(source, swapData)
+
+					if success then
+						moved += 1
+
+						-- the first item created the drop -> put the remaining items into the same drop
+						if toType == 'newdrop' and dropId then
+							toInventory = Inventory(dropId)
+							toType = 'drop'
+							previousOpen = playerInventory.open
+							playerInventory.open = dropId -- swapItems uses the opened inventory as target
+						end
+					else
+						failed += 1
+					end
+				else
+					failed += 1
+				end
+			end
+		end
+	end
+
+	-- the client opens the new drop itself (ox_inventory:createDrop) and then sets open correctly
+	if previousOpen then playerInventory.open = previousOpen end
+
+	return true, moved, failed
 end)
 
 function Inventory.Confiscate(source)
@@ -2803,6 +2935,7 @@ local function registerStash(name, label, slots, maxWeight, owner, groups, coord
 end
 
 exports('RegisterStash', registerStash)
+Inventory.RegisterStash = registerStash
 
 ---@param properties TemporaryStashProperties
 function Inventory.CreateTemporaryStash(properties)

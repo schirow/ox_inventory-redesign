@@ -1350,6 +1350,9 @@ RegisterNetEvent('ox_inventory:setPlayerInventory', function(currentDrops, inven
 		}
 	})
 
+	-- UI colors from data/theme.lua (applied by web/build/assets/search.js)
+	SendNUIMessage({ action = 'setTheme', data = lib.load('data.theme') })
+
 	PlayerData.loaded = true
 
 	if not client.disablesetupnotification then
@@ -1872,6 +1875,81 @@ RegisterNUICallback('swapItems', function(data, cb)
 	end
 end)
 
+---Toolbar addon: move all items between the player inventory and the opened inventory.
+RegisterNUICallback('transferAll', function(data, cb)
+	if swapActive or not invOpen or invBusy or usingItem then return cb(false) end
+
+	if type(data) ~= 'table' then return cb(false) end
+
+	if not currentInventory or currentInventory.type == 'shop' or currentInventory.type == 'crafting' or currentInventory.type == 'inspect' then
+		lib.notify({ type = 'error', description = 'Nothing can be moved here' })
+		return cb(false)
+	end
+
+	-- Right side is just the ground: drop everything as a new pile
+	if currentInventory.type == 'newdrop' then
+		if data.direction ~= 'toRight' then
+			lib.notify({ type = 'inform', description = 'There is nothing on the ground' })
+			return cb(false)
+		end
+
+		if cache.vehicle or IsPedFalling(playerPed) then
+			lib.notify({ type = 'error', description = 'You cannot drop anything here' })
+			return cb(false)
+		end
+
+		data.newdrop = true
+		data.coords = GetEntityCoords(playerPed)
+		data.instance = currentInstance
+	end
+
+	swapActive = true
+	local success, moved, failed = lib.callback.await('ox_inventory:transferAll', false, data)
+	swapActive = false
+
+	if not success then
+		lib.notify({ type = 'error', description = 'Unable to move items' })
+	elseif moved == 0 and failed == 0 then
+		lib.notify({ type = 'inform', description = 'No matching items to move' })
+	elseif failed > 0 then
+		lib.notify({ type = 'warning', description = ('%s items moved, %s did not fit'):format(moved, failed) })
+	else
+		lib.notify({ type = 'success', description = ('%s items moved'):format(moved) })
+	end
+
+	cb(success or false)
+end)
+
+---Toolbar addon: list the bags in the player inventory.
+---Counts ox containers (metadata.container) and items with `bag = true` in data/items.lua (e.g. backpacks).
+RegisterNUICallback('getBags', function(_, cb)
+	local bags = {}
+
+	for slot, item in pairs(PlayerData.inventory) do
+		local metadata = item?.metadata or {}
+
+		if item and (metadata.container or Items[item.name]?.bag) then
+			local open = false
+
+			if metadata.container then
+				open = currentInventory?.type == 'container' and currentInventory.id == metadata.container
+			elseif metadata.stashId then
+				open = currentInventory?.type == 'stash' and currentInventory.id == metadata.stashId
+			end
+
+			bags[#bags + 1] = {
+				slot = slot,
+				name = item.name,
+				label = metadata.label or Items[item.name]?.label or item.label or item.name,
+				open = open,
+			}
+		end
+	end
+
+	table.sort(bags, function(a, b) return a.slot < b.slot end)
+	cb(bags)
+end)
+
 RegisterNUICallback('buyItem', function(data, cb)
 	---@type boolean, false | { [1]: number, [2]: SlotWithItem, [3]: SlotWithItem | false, [4]: number}, NotifyProps
 	local response, data, message = lib.callback.await('ox_inventory:buyItem', 100, data)
@@ -1932,3 +2010,6 @@ lib.callback.register('ox_inventory:getVehicleData', function(netid)
 		return GetEntityModel(entity), GetVehicleClass(entity)
 	end
 end)
+
+-- Backpacks (data/backpacks.lua)
+require 'modules.backpack.client'
